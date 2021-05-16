@@ -1,0 +1,143 @@
+---
+title: "Enfermedades Monogénicas"
+author: ""
+date: "4/26/2021"
+output: html_document
+---
+
+**Equipo 3:**
+
+Eduardo Alejandro Arrieta Donato 
+Ana Sofía Escobedo Muñoz
+Kenia Aislinn Galván Alcaraz
+Paulina Rosales Becerra
+
+```{r message=FALSE, warning=FALSE}
+library(stringr)
+library(dplyr)
+library(GenomicRanges)
+library(biomaRt)
+library(RColorBrewer)
+library(ggplot2)
+```
+
+
+```{r setup, include=FALSE}
+setwd('/home/paulina/Documents/GenomicaHumana/Proyecto')
+clinvarResults <- read.table(file = "clinvar_result_mendelian.txt", sep = "\t", fill = TRUE, header = TRUE)
+clinvarResults <- clinvarResults[,c(1:5, 10:13)]
+dim(clinvarResults)
+
+# Filtrar por significancia
+clinvarResults <- clinvarResults[clinvarResults$Gene.s. != "",]
+clinvarResults <- clinvarResults[!startsWith(clinvarResults$Clinical.significance..Last.reviewed., "Uncertain"),]
+clinvarResults <- clinvarResults[clinvarResults$GRCh38Location != "",]
+
+dim(clinvarResults)
+
+# Separar coordenadas por inicio y final
+coords <- str_split_fixed(clinvarResults$GRCh38Location, " - ", 2)
+
+# Generar columnas de inicio y final
+for(i in 1:nrow(coords)){
+  if(coords[i, 2] == ""){
+    coords[i, 2] = coords[i, 1]
+  }
+}
+
+# Agregarlas al clinvarResults
+clinvarResults$StartCoord <- as.integer(coords[,1])
+clinvarResults$EndCoord <- as.integer(coords[,2])
+clinvarResults$MutationLength <- clinvarResults$EndCoord - clinvarResults$StartCoord + 1
+
+# Names = cromosoma
+gR <- GRanges(seqnames = clinvarResults$Gene.s., ranges = IRanges(start = clinvarResults$StartCoord, end = clinvarResults$EndCoord))
+gR
+```
+
+Falta modificar de acuerdo al filtrado 
+
+## Mapeo
+
+Kenia y Ana Sofía
+
+## Gráficas
+
+```{r message=FALSE, warning=FALSE}
+# Molecular consecuenses
+mol_cons <- data.frame(category = c('frameshift', 'missense', 'nonsense', 'splice_cite', 'ncRNA', 'UTR'), freq = c(716, 3731, 633, 348, 545, 277))
+
+mol_cons <- mol_cons %>% 
+  arrange(desc(category)) %>%
+  mutate(prop = freq / sum(mol_cons$freq) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+
+ggplot(mol_cons, aes(x = '', y = freq, fill = category)) +
+  geom_bar(stat = "identity", color = "white")+
+  coord_polar("y", start = 0) +
+  theme_void() +
+  geom_text(aes(y = ypos, label = freq), color="white", size=6) +
+  scale_fill_brewer(palette = "Set1")
+```
+
+
+```{r}
+
+# Variation type
+var_type <- data.frame(category = c('deletion', 'duplication', 'indel', 'single_nucleot'), freq = c(659, 295, 33, 5194))
+
+#Variation lenght
+var_len <- data.frame(category = c('<51_bp', '51-1000_bp', '1-50_kb'), freq = c(6206, 10, 8))
+
+ggplot(var_type, aes(x = category, y = freq, fill = category)) +
+  geom_bar(stat = "identity") + 
+  theme(legend.position = "none") +
+  labs(title = "Frecuencia Tipos de Variantes", x = "Tipo de variante", y = "Frecuencia") +
+  scale_x_discrete(labels = c("Deleción", "Duplicación", "Indel", "Single \n nucleotide"))
+
+ggplot(var_len, aes(x = category, y = freq, fill = category)) +
+  geom_bar(stat = "identity") + 
+  theme(legend.position = "none") +
+  labs(title = "Frecuencia Variantes por tamaño", x = "Tamaño de la variante", y = "Frecuencia") +
+  scale_x_discrete(labels = c("< 51 bp", "1-50 kb", "51-1000 bp"))
+
+```
+
+
+```{r}
+# Allele origin
+allele_origin <- data.frame(category = c('germline', 'de_novo', 'somatic'), freq = c(3117, 551, 59))
+
+allele_origin <- allele_origin %>% 
+  arrange(desc(category)) %>%
+  mutate(prop = freq / sum(mol_cons$freq) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+
+ggplot(allele_origin, aes(x = 2, y = freq, fill = category)) +
+  geom_bar(stat = "identity", color = "white")+
+  coord_polar("y") +
+  theme_void() +
+  geom_text(aes(y = ypos, label = freq), color="white", size=6, position=position_stack(vjust=0.5)) +
+  scale_fill_brewer(palette = "Set1") +
+  xlim(0.5, 2.5)
+```
+
+```{r}
+# Variation-gene relation
+var_gene_relation <- data.frame(category =  c('single_gene', 'overlap_genes', 'spans_mult_genes', 'multip_genes'), freq =  c(5801, 429, 80, 514))
+
+ggplot(var_gene_relation, aes(x = category, y = freq, fill = category)) +
+  geom_bar(stat = "identity") + 
+  theme(legend.position = "none") +
+  labs(title = "Frecuencia de relaciones varriante-gen", x = "Relación variante-gen", y = "Frecuencia") +
+  scale_x_discrete(labels = c("Multiple\nenes", "Overlaping\ngenes", "Single gene", "Spans \nmultiple genes")) +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+Otras gráficas:
+
+- heatmap de cromosomas (buscar formatos lindos)
+
+
