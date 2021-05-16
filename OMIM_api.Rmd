@@ -1,0 +1,70 @@
+---
+title: "OMIM"
+author: "Eduardo Arrieta"
+date: "15/5/2021"
+output: html_document
+---
+
+```{r}
+library(XML)
+```
+```{r}
+# Obteniendo los omimNumber de un archivo
+
+mimPath <- file('')
+
+# Le dejo csv por default porque no sabemos como mejaremos la información
+mimList <- read.csv(mimPath)
+# Poner una columan de caracteres con 'mimNumber'
+```
+
+```{r}
+# Construccion de urls y obtencion de xmls
+
+# Una funcion que construye la url y parsea el xml para usarla en un lapply
+ get_omim <- function(mimNumber){
+  
+  #####
+  # parameterize
+   
+  # Direccion y parametros de busqueda
+  base_url = 'https://api.omim.org/api/entry?'
+  parameters = '&include=allelicVariantList,clinicalSynopsis,geneMapList'
+  
+  # Falta el apiKey
+  apiKey = ''
+  
+  our_url <- paste(base_url, 'mimNumber=', mimNumber, parameters, sep = '')
+  our_url <- paste(our_url, '&format=xml&apiKey=', apiKey, sep = '')
+  
+  
+  #####
+  # parse
+  
+  our_xml <- xmlParse(our_url)
+  taged_xml <- xmlToList(our_xml)
+  
+  
+  # Obtencion de datos
+  mutations <- taged_xml$entryList$entry$allelicVariantList$allelicVariant$mutations
+  start <- taged_xml$entryList$entry$geneMapList$geneMap$chromosomeLocationStart
+  end <- taged_xml$entryList$entry$geneMapList$geneMap$chromosomeLocationEnd
+  # Mis dudas
+  inheretance <- taged_xml$entryList$entry$clinicalSynopsisList$clinicalSynopsis$inheritance
+
+  
+  #####  
+  # Regresar una lista con la informacion recabada
+  return(list(mimNumber, mutations, start, end, inheretance))
+  
+}
+
+# Llamada de la función
+omimList <- lapply(mimList$mimNumber, get_omim)
+```
+
+```{r}
+# Aqui no sabria como lo aceptaria
+df <- as.data.frame(omimList)
+```
+
