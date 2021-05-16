@@ -1,0 +1,111 @@
+```{r}
+library(annotatr)
+library(stringr)
+library(dplyr)
+library(GenomicRanges)
+library(biomaRt)
+library(AnnotationHub)
+```
+
+
+
+```{r}
+setwd('C:/Users/Linn/downloads/')
+clinvarResults <- read.table(file = "clinvar_result (3).txt", sep = "\t", fill = TRUE, header = TRUE)
+clinvarResults <- clinvarResults[,c(1:5, 10:13)]
+dim(clinvarResults)
+
+# Filtrar por significancia
+clinvarResults <- clinvarResults[clinvarResults$Gene.s. != "",]
+clinvarResults <- clinvarResults[!startsWith(clinvarResults$Clinical.significance..Last.reviewed., "Uncertain"),]
+clinvarResults <- clinvarResults[clinvarResults$GRCh38Location != "",]
+
+dim(clinvarResults)
+
+# Separar coordenadas por inicio y final
+coords <- str_split_fixed(clinvarResults$GRCh38Location, " - ", 2)
+
+# Generar columnas de inicio y final
+for(i in 1:nrow(coords)){
+  if(coords[i, 2] == ""){
+    coords[i, 2] = coords[i, 1]
+  }
+}
+
+# Agregarlas al clinvarResults
+clinvarResults$StartCoord <- as.integer(coords[,1])
+clinvarResults$EndCoord <- as.integer(coords[,2])
+clinvarResults$MutationLength <- clinvarResults$EndCoord - clinvarResults$StartCoord + 1
+
+# Names = cromosoma
+gR <- GRanges(seqnames = Rle(paste("chr",clinvarResults$GRCh38Chromosome,sep="")), ranges = IRanges(clinvarResults$StartCoord,clinvarResults$EndCoord , names = clinvarResults$Gene.s.))
+
+
+
+
+print(head(gR))
+
+```
+
+
+```{r}
+
+#annots = c('hg19_cpgs', 'hg19_basicgenes','hg19_genes_intergenic','hg19_genes_intronexonboundaries','hg19_genes_promoters','hg19_genes_introns','hg19_lncrna_gencode')
+annots = c('hg38_cpgs', 'hg38_basicgenes','hg38_genes_intergenic','hg38_genes_intronexonboundaries','hg38_genes_promoters','hg38_genes_introns','hg38_lncrna_gencode')
+
+# Build the annotations (a single GRanges object)
+#annotations = build_annotations(genome = 'hg19', annotations = annots)
+annotations = build_annotations(genome = 'hg38', annotations = annots)
+
+
+
+```
+
+
+```{r}
+#gr <- GRanges(seqnames = Rle(c("chr1"), c(1)),ranges = IRanges(1014316,1014317, names ="ISG15"))
+#print(gr)
+```
+```{r}
+unique(clinvarResults$GRCh38Chromosome)
+```
+
+
+```{r}
+# Intersect the regions we read in with the annotations
+gR_annotated <- annotate_regions(
+    regions = gR,
+    annotations = annotations,
+    ignore.strand = TRUE,
+    quiet = FALSE)
+
+```
+
+```{r}
+# A GRanges object is returned
+print(gR_annotated)
+```
+
+
+```{r}
+gR_annsum = summarize_annotations(
+    annotated_regions = gR_annotated,
+    quiet = TRUE)
+print(gR_annsum)
+```
+
+
+
+
+```{r}
+# Coerce to a data.frame
+df_Prueba = data.frame(gR_annotated)
+
+# See the GRanges column of dm_annotaed expanded
+print(df_Prueba)
+```
+
+
+```{r}
+length(df_Prueba[,15])
+```
