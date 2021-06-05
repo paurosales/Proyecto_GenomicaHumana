@@ -1,0 +1,293 @@
+---
+title: "Proyecto_GH"
+output: html_document
+---
+
+# Distribución de enfermedades monogenéticas a lo largo del genoma.
+
+
+
+## Librerias utilizadas
+
+```{r}
+suppressMessages(library('rentrez'))
+suppressMessages(library("xml2"))
+suppressMessages(library('XML'))
+suppressMessages(library('methods'))
+suppressMessages(library("GenomicFeatures"))
+suppressMessages(library("GenomicRanges"))
+suppressMessages(library('stringr'))
+suppressMessages(library('annotatr'))
+suppressMessages(library("TxDb.Hsapiens.UCSC.hg38.knownGene"))
+suppressMessages(library('org.Hs.eg.db'))
+
+```
+
+
+
+## Obtención de datos
+
+Automatizados
+
+```{r}
+
+######################################################### FUNCIONES #########################################################
+
+getLocationWithFormat <- function(startS, stopS){
+	diffe <- as.numeric(startS) - as.numeric(stopS)
+	if (diffe == 0){
+		return(startS)
+	}
+	else{
+		locationF <- paste(startS, '-', stopS)
+		return(locationF)
+	}
+}
+
+getSnpDataFromClinvarID <- function(clinvarID){
+	cross <- entrez_link(dbfrom='clinvar', id=clinvarID, db='snp')
+	if (length(cross$link) == 0){
+		return(NA)}
+	else{
+		crossID <- cross$links$clinvar_snp
+		SNPsummary <- entrez_summary(db= 'snp', id= crossID)
+		snp_id <- paste('rs', SNPsummary$snp_id, sep='')
+		return(snp_id)}
+}
+
+getConcaCats <- function(veve){
+	if (length(veve) > 1){
+		vevo <- str_replace_all(string= paste(veve, collapse= '\t'), pattern= '\t', replacement= '|')
+		return(vevo)}
+	else{
+		return(veve)}
+}
+
+getClinVarDataByID <- function(clinvarID){
+	message(clinvarID)
+	Sys.sleep(1)
+	esummary <- entrez_summary(db="clinvar", id=clinvarID)
+	Sys.sleep(1)
+	genes <- esummary$genes
+	symbolGenes <- getConcaCats(genes$symbol)
+	locationData <- esummary$variation_set$variation_loc[[1]]
+	if ('GRCh37' %in% locationData$assembly_name){
+		grCh37Data <- locationData[locationData$assembly_name == 'GRCh37',]
+		locaCh37 <- getLocationWithFormat(grCh37Data$start, grCh37Data$stop)}
+	else {
+		grCh37Data <- data.frame(chr= NA)
+		locaCh37 <- NA
+	}
+	if ('GRCh38' %in% locationData$assembly_name){
+		grCh38Data <- locationData[locationData$assembly_name == 'GRCh38',]
+		locaCh38 <- getLocationWithFormat(grCh38Data$start, grCh38Data$stop)}
+	else {
+		grCh38Data <- data.frame(chr= NA)
+		locaCh38 <- NA
+	}
+	dbSNP_ID <- getSnpDataFromClinvarID(clinvarID)
+	conditions <- getConcaCats(esummary$trait_set$trait_name)
+	if (is.null(conditions)){
+		conditions <- NA
+	}
+	alleleIDs <- getConcaCats(esummary$variation_set$measure_id)
+	if (is.null(alleleIDs)){
+		alleleIDs <- NA
+	}
+	rowData <- data.frame(Name = esummary$title, Genes = symbolGenes, Protein_change = esummary$protein_change, Condition = conditions, Clinical_significance = esummary$clinical_significance$description, Review_status = esummary$clinical_significance$review_status, Accession = esummary$accession, GRCh37Chromosome= grCh37Data$chr, GRCh37Location= locaCh37, GRCh38Chromosome = grCh38Data$chr, GRCh38Location = locaCh38, VariationID = clinvarID, AlleleID=alleleIDs, dbSNP_ID = dbSNP_ID, Canonical_SPDI= esummary$variation_set$canonical_spdi)
+	return(rowData[1,])
+}
+
+
+#Pasarle los MIM numbers de morbidmap.txt (OMIM_data)
+getDataFromOMIM <- function(omimID, retMax){
+	termS <- paste(omimID, '[MIM]', sep= '')
+	Sys.sleep(2)
+	searchClinVar <- entrez_search(db="clinvar", term=termS, retmax= retMax)
+	Sys.sleep(2)
+	searchIds <- searchClinVar$ids
+	dataFromOMIM <- data.frame() #??
+	for (id in searchIds){
+		tempData <- getClinVarDataByID(id)
+		dataFromOMIM <- rbind(dataFromOMIM, tempData)}
+	return(dataFromOMIM)
+}
+
+######################################################## C. Principal ########################################################
+
+#lectura de la data de OMIM morbidmap sin comentarios
+omimMorbid <- read.table('morbidmap_clean.txt', sep= '\t', nrows= 8115, quote= "")
+names(omimMorbid) <- c('Phenotype', 'Gene_Symbols', 'MIM_Number', 'Cyto_Location')
+
+#Filtrar aquellos con 3 entre parentesis que significa: "The molecular basis for the disorder is known; a mutation has been found in the gene." y obtener los MIM number
+omimMorbidMutKnown <- omimMorbid[grep("\\(3\\)", omimMorbid$Phenotype),] # de 8115 a 6860
+names(omimMorbidMutKnown) <- c('Phenotype', 'Gene_Symbols', 'MIM_Number', 'Cyto_Location')
+MIMparty <- unique(omimMorbidMutKnown$MIM_Number) # de 6860 a 4419
+
+#Iteracion sobre los MIM number (4419), cada uno regresando 20 entradas
+message('#Begin')
+for (numMIM in MIMparty){
+	newData <- data.frame()
+	message(paste('*', numMIM))
+	tempDf <- getDataFromOMIM(numMIM, 20)
+	message(paste('##', dim(tempDf)[1]))
+	tempDfCut <- tempDf[1:20,]
+	newData <- rbind(newData, tempDfCut)
+	write.table(newData, file = "dataFromMIMtoClinvar.txt", append = TRUE, quote = FALSE, sep = "\t", eol = "\n", na = "NA", row.names = FALSE, col.names = FALSE)
+}
+message('#End')
+
+
+```
+
+
+
+## Filtrado de datos
+
+```{r}
+
+#Los datos fueron filtrados con el modo estricto de esta función
+
+cleaningClinVarData <- function(data, type, mode){
+	data <- data[,1:15]
+	names(data) <- c('Name', 'Gene(s)', 'Protein_change', 'Condition(s)', 'Clinical_significance', 'Review_status', 'Accession', 'GRCh37Chromosome', 'GRCh37Location', 'GRCh38Chromosome', 'GRCh38Location', 'VariationID','AlleleID(s)', 'dbSNP_ID', 'Canonical_SPDI')
+	clinCat <- data[,'Clinical_significance']
+	if (type == 'file'){
+		cleanClinCat <- as.vector(unlist(sapply(clinCat, gsub, pattern= "\\(.*?\\)", replacement= '')))
+		data[,'Clinical_significance'] <- cleanClinCat
+	}
+	else{
+		cleanClinCat <- clinCat}
+	patosData <-  data[grep('Pathogenic', cleanClinCat),]
+	patosDataAlt <- data[grep('Likely pathogenic', cleanClinCat),]
+	if (mode == 'relax'){
+		patosData <- rbind(patosData, patosDataAlt)
+		cleanPatosData <- patosData[patosData$Review_status != 'no assertion criteria provided',]
+		return(cleanPatosData)}
+	cleanPatosData <- patosData[patosData$Review_status != 'no assertion criteria provided',]
+	chrs <- c(1:22, c('X','Y'))
+	evenCleanerPatosData_1 <- cleanPatosData[cleanPatosData$GRCh38Chromosome != "",]
+	evenCleanerPatosData_2 <- evenCleanerPatosData_1[evenCleanerPatosData_1$GRCh38Chromosome %in% chrs,]
+	evenCleanerPatosData_3 <- evenCleanerPatosData_2[evenCleanerPatosData_2$Clinical_significance != 'Pathogenic/Likely pathogenic',]
+	evenCleanerPatosData_4 <- evenCleanerPatosData_3[evenCleanerPatosData_3[,'Condition(s)'] != 'not provided',]
+	if (mode == 'normal'){
+		return(evenCleanerPatosData_2)
+	}
+	if (mode == 'strict'){
+		return(evenCleanerPatosData_4)}
+}
+
+```
+
+
+
+## Unificación de los datos
+
+```{r}
+dataBusquedaManual2 <- read.table('clinvar_result-2.txt', sep = '\t', quote= "", header= FALSE, fill= TRUE) # 250258 a 56934
+cleanPatosData_1 <- cleaningClinVarData(data, type= 'file', mode= 'strict')
+dataBusquedaManual1 <- read.table('clinvarData.txt', sep = '\t', quote= "", header= FALSE, fill= TRUE) # ... a 1014
+cleanPatosData_2 <- cleaningClinVarData(data, type= 'file', mode= 'strict')
+dataBusquedaAuto <- read.table('dataFromMIMtoClinvar_Final.txt', sep = '\t', quote= "", header= FALSE, fill= TRUE) # 71810 a 3320
+cleanPatosData_3 <- cleaningClinVarData(data, type= 'file', mode= 'strict')
+cleanPatosDatota  <- rbind(cleanPatosData_1, cleanPatosData_2, cleanPatosData_3)
+
+#Aplicación del primer filtro despues de la unificación, por la presencia de Variation ID
+popis <- cleanPatosDatota[!duplicated(cleanPatosDatota$VariationID), ]
+
+```
+
+
+
+## Referencia cruzada con OMIM
+
+```{r}
+getOMIMLink <- function(clinvarID){
+	
+	crossi <- entrez_link(dbfrom='clinvar', id=clinvarID, db='omim')
+	if (length(crossi$links) == 1){
+		return(crossi$links$clinvar_omim)}
+	else {
+		return(NA)}
+}
+
+papis <- read.table(file= 'finalDataBuernardaUnicaVerdera.txt', sep = '\t', quote= "", header= FALSE, fill= TRUE)
+popis <- papis[,1:15]
+names(popis) <- c('Name', 'Gene(s)', 'Protein_change', 'Condition(s)', 'Clinical_significance', 'Review_status', 'Accession', 'GRCh37Chromosome', 'GRCh37Location', 'GRCh38Chromosome', 'GRCh38Location', 'VariationID','AlleleID(s)', 'dbSNP_ID', 'Canonical_SPDI')
+
+varivari <- popis$VariationID
+
+for (i in 1:length(varivari)){
+        message(i)
+        temp <- getOMIMLink(varivari[i])
+        write.table(x=temp, file= 'MIM_numbers_popis-SofiaBuluc.txt', append= TRUE, quote= FALSE, sep='\n', row.names= FALSE, col.names= FALSE)
+}
+
+```
+
+```{r}
+
+popis <- read.table(file= 'finalDataBuernardaUnicaVerdera.txt', sep = '\t', quote= "", header= FALSE, fill= TRUE)
+names(popis) <- c('Name', 'Gene(s)', 'Protein_change', 'Condition(s)', 'Clinical_significance', 'Review_status', 'Accession', 'GRCh37Chromosome', 'GRCh37Location', 'GRCh38Chromosome', 'GRCh38Location', 'VariationID','AlleleID(s)', 'dbSNP_ID', 'Canonical_SPDI')
+
+mimimi <- readLines('MIM_numbers_popis.txt')
+popis$MIM_number <- mimimi[-c(14273,28544,42815)]
+
+popipo <- popis[popis$MIM_number != 'NA',]
+
+```
+
+
+
+## Anotación
+
+```{r}
+
+annots = c('hg38_genes_intergenic','hg38_genes_introns', "hg38_genes_exons", "hg38_genes_5UTRs", "hg38_genes_3UTRs")
+annotations = build_annotations(genome = 'hg38', annotations = annots)
+
+mappingChafa <- function(rowdata, annotations){
+	location <- as.numeric(as.vector(str_split(rowdata$GRCh38Location, pattern= ' - ', simplify=TRUE)))
+	if (length(location) == 1){
+		gr <- GRanges(
+			seqnames = paste('chr', rowdata$GRCh38Chromosome, sep= ''),
+			ranges = IRanges(start= location[1], end= location[1]),
+			strand = '*',
+			geneID = rowdata[, 'Gene(s)'], varID= rowdata$VariationID)}
+	if (length(location) == 2){
+		gr <- GRanges(
+			seqnames = paste('chr',  rowdata$GRCh38Chromosome, sep= ''),
+			ranges = IRanges(start= location[1], end= location[2]),
+			strand = '*',
+			geneID = rowdata[, 'Gene(s)'], varID= rowdata$VariationID)}
+	telera <- annotate_regions(regions = gr, annotations = annotations, ignore.strand = TRUE, quiet = TRUE)
+	df <- data.frame(telera)
+	coco <- as.data.frame(table(df$annot.type))
+	cocoSort <- coco[order(-coco$Freq), ]
+	catMost <- as.vector(cocoSort[1,1])
+	dfMost <- df[df$annot.type == catMost, ]
+	return(dfMost[1,])
+}
+
+clinvarResults <- read.table(file = "plantaCarnivoraFinal.txt", sep = "\t", fill = TRUE, quote="", header =FALSE)
+names(clinvarResults)<-c('Name', 'Gene(s)', 'Protein_change', 'Condition(s)', 'Clinical_significance', 'Review_status', 'Accession', 'GRCh37Chromosome', 'GRCh37Location', 'GRCh38Chromosome', 'GRCh38Location', 'VariationID','AlleleID(s)', 'dbSNP_ID', 'Canonical_SPDI')
+
+message('##Begin')
+
+
+for (i in 1:45061){
+	tempDf <- data.frame()
+	message(i)
+	temp <- mappingChafa(clinvarResults[i,], annotations)
+	tempDf <- rbind(tempDf, temp)
+}
+write.table(x= tempDf, file= 'anotados_final', append= TRUE, sep= '\t', row.names= FALSE, quote= FALSE, col.names= FALSE)
+message('##End')
+
+
+```
+
+
+
+
+
